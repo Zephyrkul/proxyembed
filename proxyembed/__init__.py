@@ -135,13 +135,13 @@ class ProxyEmbed(discord.Embed):
             unwrapped.append(f"<{url}>")
         text, timestamp = self._("footer.text"), self._("timestamp")
         if text and timestamp:
-            ftimestamp = format_datetime(timestamp, locale=get_babel_locale())
+            ftimestamp = format_datetime(timestamp, format="long", locale=get_babel_locale())
             unwrapped.append(f"{text} • {ftimestamp}")
         elif text:
             unwrapped.append(text)
         elif timestamp:
-            ftimestamp = format_datetime(timestamp, locale=get_babel_locale())
-            unwrapped.append(f"{ftimestamp}")
+            ftimestamp = format_datetime(timestamp, format="long", locale=get_babel_locale())
+            unwrapped.append(ftimestamp)
 
         route = discord.http.Route(
             "POST", "/channels/{channel_id}/messages", channel_id=ctx.channel.id
