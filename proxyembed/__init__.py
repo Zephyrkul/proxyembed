@@ -4,7 +4,7 @@ which respect Red's ctx.embed_requested()"""
 import logging
 import re
 from collections import defaultdict
-from typing import NoReturn
+from typing import NoReturn, List
 
 import discord
 from babel.dates import format_datetime
@@ -14,7 +14,7 @@ from redbot.core.utils import chat_formatting as CF
 
 __all__ = ["ProxyEmbed"]
 __author__ = "Zephyrkul"
-__version__ = "0.0.2"
+__version__ = "0.0.3dev1"
 
 LOG = logging.getLogger("red.fluffy.proxyembed")
 LINK_MD = re.compile(r"\[([^\]]+)\]\(([^\)]+)\)")
@@ -85,7 +85,7 @@ class ProxyEmbed(discord.Embed):
             return obj
         return self.Empty
 
-    async def send_to(self, ctx: Context, content: str = None) -> None:
+    async def send_to(self, ctx: Context, content: str = None) -> discord.Message:
         if await ctx.embed_requested():
             return await ctx.send(content=content, embed=self)
         content = str(content) if content is not None else None
@@ -143,11 +143,8 @@ class ProxyEmbed(discord.Embed):
             ftimestamp = format_datetime(timestamp, format="long", locale=get_babel_locale())
             unwrapped.append(ftimestamp)
 
-        route = discord.http.Route(
-            "POST", "/channels/{channel_id}/messages", channel_id=ctx.channel.id
-        )
         pages = CF.pagify(_links("\n".join(map(str, unwrapped))), shorten_by=0)
+        m = None
         for page in pages:
-            await ctx.bot.http.request(
-                route, json={"content": page, "allowed_mentions": {"parse": []}}
-            )
+            m = await ctx.send(page, allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=False))
+        return m
