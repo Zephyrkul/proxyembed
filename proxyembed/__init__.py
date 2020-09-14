@@ -21,6 +21,7 @@ __version__ = "0.0.3"
 
 LOG = logging.getLogger("red.fluffy.proxyembed")
 LINK_MD = re.compile(r"\[([^\]]+)\]\(([^\)]+)\)")
+MM_RE = re.compile(r"@(everyone|here)")
 quote = functools.partial(textwrap.indent, prefix="> ", predicate=lambda l: True)
 
 
@@ -273,14 +274,22 @@ class ProxyEmbed(discord.Embed):
             unwrapped.append(ftimestamp)
 
         if mentions := kwargs.get("allowed_mentions", None):
-            for attr in ("everyone", "roles", "users"):
+            if not content or not MM_RE.search(content):
+                mentions.everyone = False
+            for attr in ("roles", "users"):
                 # use == here in case it's default
                 if getattr(mentions, attr) == True:
                     setattr(mentions, attr, False)
         else:
-            kwargs["allowed_mentions"] = discord.AllowedMentions(
-                everyone=False, roles=False, users=False
-            )
+            if content and MM_RE.search(content):
+                # don't specify everyone here, leave it default
+                kwargs["allowed_mentions"] = discord.AllowedMentions(
+                    users=False, roles=False
+                )
+            else:
+                kwargs["allowed_mentions"] = discord.AllowedMentions(
+                    everyone=False, users=False, roles=False
+                )
 
         if message := await send(_links("\n".join(unwrapped))):
             return message
