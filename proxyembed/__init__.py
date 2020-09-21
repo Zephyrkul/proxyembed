@@ -17,7 +17,7 @@ from redbot.core.utils.chat_formatting import bold, italics
 
 __all__ = ["ProxyEmbed", "EmptyOverwrite", "embed_requested"]
 __author__ = "Zephyrkul"
-__version__ = "0.0.3"
+__version__ = "0.0.4"
 
 LOG = logging.getLogger("red.fluffy.proxyembed")
 LINK_MD = re.compile(r"\[([^\]]+)\]\(([^\)]+)\)")
@@ -25,7 +25,7 @@ MM_RE = re.compile(r"@(everyone|here)")
 quote = functools.partial(textwrap.indent, prefix="> ", predicate=lambda l: True)
 
 
-def _links(string: str) -> str:
+def _reformat_links(string: str) -> str:
     return LINK_MD.sub(r"\1 (<\2>)", string)
 
 
@@ -70,22 +70,15 @@ async def embed_requested(
         ns = SimpleNamespace(
             channel=__dest.channel, user=__dest.author, guild=__dest.guild
         )
-    elif isinstance(__dest, (discord.User, discord.Member)):
-        try:
-            channel = __dest.dm_channel or await __dest.create_dm()
-        except AttributeError:
-            raise TypeError("I can't send DMs to myself.") from None
-        ns = SimpleNamespace(
-            channel=channel,
-            user=__dest,
-            guild=None,
-        )
-    elif isinstance(__dest, discord.DMChannel):
-        ns = SimpleNamespace(channel=__dest, author=__dest.recipient, guild=None)
     else:
-        if guild := getattr(__dest, "guild", None):
+        channel = await __dest._get_channel()
+        if user := getattr(channel, "recipient", None):
+            ns = SimpleNamespace(channel=channel, user=user, guild=None)
+        elif guild := getattr(channel, "guild", None):
             # the actual user object here doesn't matter
-            ns = SimpleNamespace(channel=__dest, user=None, guild=guild)
+            ns = SimpleNamespace(channel=channel, user=None, guild=guild)
+        # And this is where I'd put my implementation for GroupChannel
+        # if bots had them!
         else:
             raise TypeError(f"Unknown destination type {__dest.__class__!r}")
     if ns.guild and not ns.channel.permissions_for(ns.guild.me).embed_links:
@@ -179,7 +172,6 @@ class ProxyEmbed(discord.Embed):
         self,
         __dest: Union[discord.abc.Messageable, discord.Message],
         /,
-        content: str = None,
         *,
         bot: Red = None,
         **kwargs,
@@ -203,11 +195,15 @@ class ProxyEmbed(discord.Embed):
         else:
             send = functools.partial(__dest.send, **kwargs)
         if await embed_requested(__dest, bot=bot):
-            if message := await send(content=content, embed=self):
+            if message := await send(embed=self):
                 return message
             else:
                 assert isinstance(__dest, discord.Message)
                 return __dest
+        try:
+            content = kwargs.pop("content")
+        except KeyError:
+            content = getattr(__dest, "content", None)
         content = str(content) if content is not None else None
         unwrapped = []
         if content:
@@ -291,7 +287,7 @@ class ProxyEmbed(discord.Embed):
                     everyone=False, users=False, roles=False
                 )
 
-        if message := await send(_links("\n".join(unwrapped))):
+        if message := await send(content=_reformat_links("\n".join(unwrapped))):
             return message
         else:
             assert isinstance(__dest, discord.Message)
