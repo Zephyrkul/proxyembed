@@ -11,13 +11,14 @@ from typing import Any, Callable, Coroutine, NoReturn, Optional, Union
 
 import discord
 from babel.dates import format_datetime
+from redbot.core import commands
 from redbot.core.bot import Red
 from redbot.core.i18n import get_babel_locale
 from redbot.core.utils.chat_formatting import bold, italics
 
 __all__ = ["ProxyEmbed", "EmptyOverwrite", "embed_requested"]
 __author__ = "Zephyrkul"
-__version__ = "0.0.4"
+__version__ = "0.0.5"
 
 LOG = logging.getLogger("red.fluffy.proxyembed")
 LINK_MD = re.compile(r"\[([^\]]+)\]\(([^\)]+)\)")
@@ -56,6 +57,7 @@ async def embed_requested(
     /,
     *,
     bot: Red = None,
+    command: commands.Command = None,
 ) -> bool:
     """
     Helper method to determine whether to send an embed to any arbitrary destination.
@@ -86,7 +88,7 @@ async def embed_requested(
     if not bot:
         LOG.warning("No bot kwarg provided; only checking permissions")
         return True
-    return await bot.embed_requested(ns.channel, ns.user)
+    return await bot.embed_requested(ns.channel, ns.user, command=command)
 
 
 class ProxyEmbed(discord.Embed):
@@ -174,6 +176,7 @@ class ProxyEmbed(discord.Embed):
         /,
         *,
         bot: Red = None,
+        command: commands.Command = None,
         **kwargs,
     ) -> discord.Message:
         """
@@ -194,7 +197,7 @@ class ProxyEmbed(discord.Embed):
             send = functools.partial(__dest.edit, **kwargs)
         else:
             send = functools.partial(__dest.send, **kwargs)
-        if await embed_requested(__dest, bot=bot):
+        if await embed_requested(__dest, bot=bot, command=command):
             if message := await send(embed=self):
                 return message
             else:
