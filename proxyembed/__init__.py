@@ -277,8 +277,7 @@ class ProxyEmbed(discord.Embed):
             unwrapped.append(f"<{url}>")
         text, timestamp = _("footer.text"), cast(datetime, _("timestamp"))
         if text and timestamp:
-            ftimestamp = f"<t:{timestamp.timestamp():.0f}>"
-            unwrapped.append(f"{text} • {ftimestamp}")
+            unwrapped.append(f"{text} • <t:{timestamp.timestamp():.0f}>")
         elif text:
             unwrapped.append(text)
         elif timestamp:
