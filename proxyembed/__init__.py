@@ -4,26 +4,26 @@ which respect Red's ctx.embed_requested()"""
 import functools
 import logging
 import re
-import textwrap
+import warnings
 from collections import defaultdict
+from datetime import datetime
 from types import SimpleNamespace
-from typing import Any, Callable, Coroutine, NoReturn, Optional, Union
+from typing import NoReturn, Optional, Union, cast, overload
 
 import discord
 from babel.dates import format_datetime
 from redbot.core import commands
 from redbot.core.bot import Red
 from redbot.core.i18n import get_babel_locale
-from redbot.core.utils.chat_formatting import bold, italics
+from redbot.core.utils.chat_formatting import bold, italics, quote
 
 __all__ = ["ProxyEmbed", "EmptyOverwrite", "embed_requested"]
 __author__ = "Zephyrkul"
-__version__ = "0.0.5"
+__version__ = "0.1.0"
 
 LOG = logging.getLogger("red.fluffy.proxyembed")
-LINK_MD = re.compile(r"\[([^\]]+)\]\(([^\)]+)\)")
+LINK_MD = re.compile(r'\[([^\]]+)\]\(([^\)]+)( "[^"]")?\)')
 MM_RE = re.compile(r"@(everyone|here)")
-quote = functools.partial(textwrap.indent, prefix="> ", predicate=lambda l: True)
 
 
 def _reformat_links(string: str) -> str:
@@ -41,7 +41,7 @@ class _OverwritesEmbed(discord.Embed):
     @property
     def fields(self):
         return defaultdict(
-            discord.embeds.EmbedProxy,
+            lambda: discord.embeds.EmbedProxy({}),
             {i: discord.embeds.EmbedProxy(v) for i, v in self._fields.items()},
         )
 
@@ -53,42 +53,49 @@ EmptyOverwrite = ""
 
 
 async def embed_requested(
-    __dest: Union[discord.abc.Messageable, discord.Message],
+    __dest: Union[discord.abc.Messageable, discord.Message, discord.PartialMessage],
     /,
     *,
-    bot: Red = None,
+    bot: None = None,
     command: commands.Command = None,
 ) -> bool:
     """
     Helper method to determine whether to send an embed to any arbitrary destination.
-
-    If neither ``ctx`` nor ``bot`` are passed, only Discord permissions are checked.
     """
+    if bot is not None:
+        warnings.warn(
+            "Passing 'bot' to 'embed_requested' is deprecated.", DeprecationWarning
+        )
     # Note: This doesn't handle GroupChannel. Bots can't access GroupChannels.
     if method := getattr(__dest, "embed_requested", None):
         return await method()
     ns: SimpleNamespace
+    client: Red
     if isinstance(__dest, discord.Message):
+        client = __dest._state._get_client()  # type: ignore
         ns = SimpleNamespace(
             channel=__dest.channel, user=__dest.author, guild=__dest.guild
         )
+    elif isinstance(__dest, discord.PartialMessage):
+        client = __dest._state._get_client()  # type: ignore
+        ns = SimpleNamespace(
+            channel=__dest.channel,
+            user=getattr(__dest.channel, "recipient", None),
+            guild=__dest.guild,
+        )
     else:
-        channel = await __dest._get_channel()
+        channel = await __dest._get_channel()  # type: ignore
+        client = channel._state._get_client()  # type: ignore
         if user := getattr(channel, "recipient", None):
             ns = SimpleNamespace(channel=channel, user=user, guild=None)
         elif guild := getattr(channel, "guild", None):
             # the actual user object here doesn't matter
             ns = SimpleNamespace(channel=channel, user=None, guild=guild)
-        # And this is where I'd put my implementation for GroupChannel
-        # if bots had them!
         else:
             raise TypeError(f"Unknown destination type {__dest.__class__!r}")
     if ns.guild and not ns.channel.permissions_for(ns.guild.me).embed_links:
         return False
-    if not bot:
-        LOG.warning("No bot kwarg provided; only checking permissions")
-        return True
-    return await bot.embed_requested(ns.channel, ns.user, command=command)
+    return await client.embed_requested(ns.channel, ns.user, command=command)
 
 
 class ProxyEmbed(discord.Embed):
@@ -109,7 +116,10 @@ class ProxyEmbed(discord.Embed):
         (Impl. note: This is just the empty string. Use the attribute anyway in case that ever changes.)
     """
 
+    # repeating __slots__ is a slight performance hit,
+    # but to_dict requires doing so here
     __slots__ = ("_overwrites", *discord.Embed.__slots__)
+    _overwrites: _OverwritesEmbed
     EmptyOverwrite = EmptyOverwrite
 
     def __new__(cls, *args, **kwargs):
@@ -120,8 +130,6 @@ class ProxyEmbed(discord.Embed):
 
     @classmethod
     def from_embed(cls, embed: discord.Embed):
-        if isinstance(embed, cls):
-            return embed
         return cls.from_dict(embed.to_dict())
 
     @property
@@ -129,7 +137,7 @@ class ProxyEmbed(discord.Embed):
         return self._overwrites
 
     @classmethod
-    def _get(cls, obj, attr):
+    def __get(cls, obj, attr):
         if obj == EmptyOverwrite:
             return obj
         try:
@@ -146,39 +154,62 @@ class ProxyEmbed(discord.Embed):
                     return cls.Empty
         return obj
 
-    def _(self, *attrs):
+    # Return type is a lie. Actual return type is:
+    # str | bool | int | discord.Colour | datetime.datetime | _EmptyEmbed
+    def __unwrap_overwrite(self, *attrs) -> Optional[str]:
+        if not attrs:
+            raise TypeError
         attrs = ".".join(map(str, attrs))
         overwrite = self.overwrites
         obj = self
         for attr in attrs.split("."):
             if overwrite is not self.Empty:
-                overwrite = self._get(overwrite, attr)
-            obj = self._get(obj, attr)
+                overwrite = self.__get(overwrite, attr)
+            obj = self.__get(obj, attr)
         if overwrite is not self.Empty:
             LOG.debug(
-                "Returning overwritten value %r for attr ProxyEmbed.%r",
+                "Returning overwritten value %r for attr ProxyEmbed.%s",
                 overwrite,
                 attrs,
             )
-            return overwrite
-        if obj is not self.Empty:
-            return obj
-        return self.Empty
+            return overwrite  # type: ignore
+        return obj  # type: ignore
 
     def to_dict(self):
         result = super().to_dict()
         result.pop("overwrites", None)
         return result
 
+    @overload
     async def send_to(
         self,
-        __dest: Union[discord.abc.Messageable, discord.Message],
+        __dest: discord.Message,
         /,
         *,
-        bot: Red = None,
-        command: commands.Command = None,
+        command: Optional[commands.Command] = None,
+        **kwargs,
+    ) -> None:
+        ...
+
+    @overload
+    async def send_to(
+        self,
+        __dest: Union[discord.abc.Messageable, discord.PartialMessage],
+        /,
+        *,
+        command: Optional[commands.Command] = None,
         **kwargs,
     ) -> discord.Message:
+        ...
+
+    async def send_to(
+        self,
+        __dest: Union[discord.abc.Messageable, discord.Message, discord.PartialMessage],
+        /,
+        *,
+        command: Optional[commands.Command] = None,
+        **kwargs,
+    ) -> Optional[discord.Message]:
         """
         Sends this ProxyEmbed to the specified destination.
 
@@ -188,21 +219,19 @@ class ProxyEmbed(discord.Embed):
         Note that this **does not** pagify large embeds for you.
         Use pagify on your own if you believe your embed may be too large.
         """
-        _ = self._
+        if kwargs.pop("bot", None) is not None:  # this is no longer required
+            LOG.debug(
+                "Unnecessary 'bot' argument passed to ProxyEmbed", stack_info=True
+            )
         if kwargs.pop("embed", self) is not self:
             raise TypeError("send_to() got an unexpected kwarg 'embed'")
-        bot = bot or getattr(__dest, "bot", None)
-        send: Callable[..., Coroutine[Any, Any, Optional[discord.Message]]]
-        if isinstance(__dest, discord.Message):
+        if isinstance(__dest, (discord.Message, discord.PartialMessage)):
             send = functools.partial(__dest.edit, **kwargs)
         else:
             send = functools.partial(__dest.send, **kwargs)
-        if await embed_requested(__dest, bot=bot, command=command):
-            if message := await send(embed=self):
-                return message
-            else:
-                assert isinstance(__dest, discord.Message)
-                return __dest
+        if await embed_requested(__dest, command=command):
+            return await send(embed=self)
+        _ = self.__unwrap_overwrite
         try:
             content = kwargs.pop("content")
         except KeyError:
@@ -235,10 +264,11 @@ class ProxyEmbed(discord.Embed):
             unwrapped.append("")
         for i in range(len(getattr(self, "_fields", []))):
             inline, name, value = (
-                _("_fields", i, "inline"),
+                cast(bool, _("_fields", i, "inline")),
                 _("_fields", i, "name"),
                 _("_fields", i, "value"),
             )
+            assert name and value
             LOG.debug(
                 "index: %r, inline: %r, name: %r, value: %r", i, inline, name, value
             )
@@ -258,11 +288,9 @@ class ProxyEmbed(discord.Embed):
         url = _("image.url")
         if url and not url.startswith("attachment://"):
             unwrapped.append(f"<{url}>")
-        text, timestamp = _("footer.text"), _("timestamp")
+        text, timestamp = _("footer.text"), cast(datetime, _("timestamp"))
         if text and timestamp:
-            ftimestamp = format_datetime(
-                timestamp, format="long", locale=get_babel_locale()
-            )
+            ftimestamp = f"<t:{timestamp.timestamp():.0f}>"
             unwrapped.append(f"{text} • {ftimestamp}")
         elif text:
             unwrapped.append(text)
@@ -272,6 +300,7 @@ class ProxyEmbed(discord.Embed):
             )
             unwrapped.append(ftimestamp)
 
+        mentions: Optional[discord.AllowedMentions]
         if mentions := kwargs.get("allowed_mentions", None):
             if not content or not MM_RE.search(content):
                 mentions.everyone = False
@@ -290,8 +319,4 @@ class ProxyEmbed(discord.Embed):
                     everyone=False, users=False, roles=False
                 )
 
-        if message := await send(content=_reformat_links("\n".join(unwrapped))):
-            return message
-        else:
-            assert isinstance(__dest, discord.Message)
-            return __dest
+        return await send(content=_reformat_links("\n".join(unwrapped)))
