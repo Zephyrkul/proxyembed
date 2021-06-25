@@ -281,8 +281,7 @@ class ProxyEmbed(discord.Embed):
         elif text:
             unwrapped.append(text)
         elif timestamp:
-            ftimestamp = format_datetime(timestamp, format="long", locale=get_babel_locale())
-            unwrapped.append(ftimestamp)
+            unwrapped.append(f"<t:{timestamp.timestamp():.0f}>")
 
         mentions: Optional[discord.AllowedMentions]
         if mentions := kwargs.get("allowed_mentions", None):
