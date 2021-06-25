@@ -7,3 +7,13 @@ module = "proxyembed"
 author = "Zephyrkul"
 home-page = "https://github.com/zephyrkul/proxyembed"
 classifiers = ["License :: OSI Approved :: MIT License"]
+
+[tool.isort]
+    profile = 'black'
+    line_length = 99
+    combine_as_imports = true
+
+[tool.black]
+    line-length = 99
+    target-version = ['py38']
+    include = '\.pyi?$'

@@ -63,9 +63,7 @@ async def embed_requested(
     Helper method to determine whether to send an embed to any arbitrary destination.
     """
     if bot is not None:
-        warnings.warn(
-            "Passing 'bot' to 'embed_requested' is deprecated.", DeprecationWarning
-        )
+        warnings.warn("Passing 'bot' to 'embed_requested' is deprecated.", DeprecationWarning)
     # Note: This doesn't handle GroupChannel. Bots can't access GroupChannels.
     if method := getattr(__dest, "embed_requested", None):
         return await method()
@@ -73,9 +71,7 @@ async def embed_requested(
     client: Red
     if isinstance(__dest, discord.Message):
         client = __dest._state._get_client()  # type: ignore
-        ns = SimpleNamespace(
-            channel=__dest.channel, user=__dest.author, guild=__dest.guild
-        )
+        ns = SimpleNamespace(channel=__dest.channel, user=__dest.author, guild=__dest.guild)
     elif isinstance(__dest, discord.PartialMessage):
         client = __dest._state._get_client()  # type: ignore
         ns = SimpleNamespace(
@@ -220,9 +216,7 @@ class ProxyEmbed(discord.Embed):
         Use pagify on your own if you believe your embed may be too large.
         """
         if kwargs.pop("bot", None) is not None:  # this is no longer required
-            LOG.debug(
-                "Unnecessary 'bot' argument passed to ProxyEmbed", stack_info=True
-            )
+            LOG.debug("Unnecessary 'bot' argument passed to ProxyEmbed", stack_info=True)
         if kwargs.pop("embed", self) is not self:
             raise TypeError("send_to() got an unexpected kwarg 'embed'")
         if isinstance(__dest, (discord.Message, discord.PartialMessage)):
@@ -269,16 +263,9 @@ class ProxyEmbed(discord.Embed):
                 _("_fields", i, "value"),
             )
             assert name and value
-            LOG.debug(
-                "index: %r, inline: %r, name: %r, value: %r", i, inline, name, value
-            )
+            LOG.debug("index: %r, inline: %r, name: %r, value: %r", i, inline, name, value)
             name = f"**{name}**"
-            if (
-                not inline
-                or len(name) + len(value) > 78
-                or "\n" in name
-                or "\n" in value
-            ):
+            if not inline or len(name) + len(value) > 78 or "\n" in name or "\n" in value:
                 unwrapped.append(name)
                 unwrapped.append(quote(value))
             else:
@@ -295,9 +282,7 @@ class ProxyEmbed(discord.Embed):
         elif text:
             unwrapped.append(text)
         elif timestamp:
-            ftimestamp = format_datetime(
-                timestamp, format="long", locale=get_babel_locale()
-            )
+            ftimestamp = format_datetime(timestamp, format="long", locale=get_babel_locale())
             unwrapped.append(ftimestamp)
 
         mentions: Optional[discord.AllowedMentions]
@@ -311,9 +296,7 @@ class ProxyEmbed(discord.Embed):
         else:
             if content and MM_RE.search(content):
                 # don't specify everyone here, leave it default
-                kwargs["allowed_mentions"] = discord.AllowedMentions(
-                    users=False, roles=False
-                )
+                kwargs["allowed_mentions"] = discord.AllowedMentions(users=False, roles=False)
             else:
                 kwargs["allowed_mentions"] = discord.AllowedMentions(
                     everyone=False, users=False, roles=False
