@@ -256,14 +256,15 @@ class ProxyEmbed(discord.Embed):
             unwrapped.append("")
         for i in range(len(getattr(self, "_fields", []))):
             inline, name, value = (
-                cast(bool, _("_fields", i, "inline")),
+                # actual type: bool | _EmptyEmbed
+                cast(Optional[bool], _("_fields", i, "inline")),
                 _("_fields", i, "name"),
                 _("_fields", i, "value"),
             )
             assert name and value
             LOG.debug("index: %r, inline: %r, name: %r, value: %r", i, inline, name, value)
             name = f"**{name}**"
-            if not inline or len(name) + len(value) > 78 or "\n" in name or "\n" in value:
+            if inline is False or len(name) + len(value) > 78 or "\n" in name or "\n" in value:
                 unwrapped.append(name)
                 unwrapped.append(quote(value))
             else:
@@ -273,7 +274,8 @@ class ProxyEmbed(discord.Embed):
         url = _("image.url")
         if url and not url.startswith("attachment://"):
             unwrapped.append(f"<{url}>")
-        text, timestamp = _("footer.text"), cast(datetime, _("timestamp"))
+        # actual timestamp type: datetime | _EmptyEmbed
+        text, timestamp = _("footer.text"), cast(Optional[datetime], _("timestamp"))
         if text and timestamp:
             unwrapped.append(f"{text} • <t:{timestamp.timestamp():.0f}>")
         elif text:
