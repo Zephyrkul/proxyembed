@@ -11,10 +11,8 @@ from types import SimpleNamespace
 from typing import NoReturn, Optional, Union, cast, overload
 
 import discord
-from babel.dates import format_datetime
 from redbot.core import commands
 from redbot.core.bot import Red
-from redbot.core.i18n import get_babel_locale
 from redbot.core.utils.chat_formatting import bold, italics, quote
 
 __all__ = ["ProxyEmbed", "EmptyOverwrite", "embed_requested"]
