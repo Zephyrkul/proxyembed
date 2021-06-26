@@ -25,7 +25,7 @@ __version__ = "0.1.1"
 
 LOG = logging.getLogger("red.fluffy.proxyembed")
 LINK_MD = re.compile(
-    r"\[(?P<text>[^\]]+)\]\(<?(?P<url>[^>\)\s]+)>?(?:\s+(\"|')(?P<hover>.+)\3)?\)"
+    r"\[(?P<text>[^\]]+)\]\(<?(?P<url>[^>\)\s]+)>?(?:\s+(\"|')(?P<hover>.+?)\3)?\)"
 )
 MM_RE = re.compile(r"@(everyone|here)")
 
