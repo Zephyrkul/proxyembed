@@ -1,12 +1,12 @@
 [build-system]
-requires = ["flit_core >=2,<4"]
-build-backend = "flit_core.buildapi"
+    requires = ["flit_core >=2,<4"]
+    build-backend = "flit_core.buildapi"
 
 [tool.flit.metadata]
-module = "proxyembed"
-author = "Zephyrkul"
-home-page = "https://github.com/zephyrkul/proxyembed"
-classifiers = ["License :: OSI Approved :: MIT License"]
+    module = "proxyembed"
+    author = "Zephyrkul"
+    home-page = "https://github.com/zephyrkul/proxyembed"
+    classifiers = ["License :: OSI Approved :: MIT License"]
 
 [tool.isort]
     profile = 'black'
