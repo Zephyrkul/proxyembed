@@ -3,7 +3,6 @@ which respect Red's ctx.embed_requested()"""
 
 import functools
 import logging
-import re
 import warnings
 from collections import defaultdict
 from datetime import datetime
@@ -15,17 +14,24 @@ from redbot.core import commands
 from redbot.core.bot import Red
 from redbot.core.utils.chat_formatting import bold, italics, quote
 
+try:
+    import regex as re
+except ImportError:
+    import re
+
 __all__ = ["ProxyEmbed", "EmptyOverwrite", "embed_requested"]
 __author__ = "Zephyrkul"
 __version__ = "0.1.0"
 
 LOG = logging.getLogger("red.fluffy.proxyembed")
-LINK_MD = re.compile(r'\[([^\]]+)\]\(([^\)]+)( "[^"]")?\)')
+LINK_MD = re.compile(
+    r"\[(?P<text>[^\]]+)\]\(<?(?P<url>[^>\)\s]+)>?(?:\s+(\"|')(?P<hover>.+)\3)?\)"
+)
 MM_RE = re.compile(r"@(everyone|here)")
 
 
 def _reformat_links(string: str) -> str:
-    return LINK_MD.sub(r"\1 (<\2>)", string)
+    return LINK_MD.sub(r"\g<text> (<\g<url>>)", string)
 
 
 class _OverwritesEmbed(discord.Embed):
