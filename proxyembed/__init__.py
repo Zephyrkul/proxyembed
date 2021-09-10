@@ -274,7 +274,7 @@ class ProxyEmbed(discord.Embed):
                     everyone=False, users=False, roles=False
                 )
         unwrapped = self.unwrap()
-        if content:
+        if content is not None:
             unwrapped = f"{content}\n\n{unwrapped}"
         return await send(content=unwrapped, **kwargs)
 
