@@ -1,18 +1,20 @@
 """Auto-unwrapping d.py embeds for use with Red,
 which respect Red's ctx.embed_requested()"""
+from __future__ import annotations
 
-import functools
 import logging
+import textwrap
 import warnings
 from collections import defaultdict
 from datetime import datetime
 from types import SimpleNamespace
-from typing import NoReturn, Optional, Union, cast, overload
+from typing import TYPE_CHECKING, Any, List, Literal, NoReturn, Optional, Union, overload
 
 import discord
-from redbot.core import commands
-from redbot.core.bot import Red
-from redbot.core.utils.chat_formatting import bold, italics, quote
+
+if TYPE_CHECKING:
+    from redbot.core import commands
+    from redbot.core.bot import Red
 
 try:
     import regex as re
@@ -21,7 +23,7 @@ except ImportError:
 
 __all__ = ["ProxyEmbed", "EmptyOverwrite", "embed_requested"]
 __author__ = "Zephyrkul"
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 LOG = logging.getLogger("red.fluffy.proxyembed")
 LINK_MD = re.compile(
@@ -32,6 +34,10 @@ MM_RE = re.compile(r"@(everyone|here)")
 
 def _reformat_links(string: str) -> str:
     return LINK_MD.sub(r"\g<text> (<\g<url>>)", string)
+
+
+def _quote(string: str) -> str:
+    return textwrap.indent(string, "> ", lambda l: True)
 
 
 class _OverwritesEmbed(discord.Embed):
@@ -50,10 +56,17 @@ class _OverwritesEmbed(discord.Embed):
         )
 
     def add_field(self, *args, **kwargs) -> NoReturn:
-        raise NotImplementedError("This operation is unsupported for overwrites.")
+        raise NotImplementedError(
+            "This operation is unsupported for overwrites; use set_field_at instead"
+        )
+
+    def insert_field_at(self, *args, **kwargs) -> NoReturn:
+        raise NotImplementedError(
+            "This operation is unsupported for overwrites; use set_field_at instead"
+        )
 
 
-EmptyOverwrite = ""
+EmptyOverwrite: Any = ""
 
 
 async def embed_requested(
@@ -71,7 +84,6 @@ async def embed_requested(
     # Note: This doesn't handle GroupChannel. Bots can't access GroupChannels.
     if method := getattr(__dest, "embed_requested", None):
         return await method()
-    ns: SimpleNamespace
     client: Red
     if isinstance(__dest, discord.Message):
         client = __dest._state._get_client()  # type: ignore
@@ -92,7 +104,7 @@ async def embed_requested(
             # the actual user object here doesn't matter
             ns = SimpleNamespace(channel=channel, user=None, guild=guild)
         else:
-            raise TypeError(f"Unknown destination type {__dest.__class__!r}")
+            raise TypeError(f"Unknown destination type {type(__dest)!r}")
     if ns.guild and not ns.channel.permissions_for(ns.guild.me).embed_links:
         return False
     return await client.embed_requested(ns.channel, ns.user, command=command)
@@ -154,9 +166,24 @@ class ProxyEmbed(discord.Embed):
                     return cls.Empty
         return obj
 
-    # Return type is a lie. Actual return type is:
+    @overload
+    def __unwrap_overwrite(
+        self, _1: Literal["_fields"], _2: int, _3: Literal["inline"], /
+    ) -> Optional[bool]:
+        ...
+
+    @overload
+    def __unwrap_overwrite(self, _1: Literal["timestamp"], /) -> Optional[datetime]:
+        ...
+
+    @overload
+    def __unwrap_overwrite(self, _1: str, /, *attrs: str) -> Optional[str]:
+        ...
+
+    # There are other overloads to consider, but they're not needed for now
+    # Actual possible return types:
     # str | bool | int | discord.Colour | datetime.datetime | _EmptyEmbed
-    def __unwrap_overwrite(self, *attrs) -> Optional[str]:
+    def __unwrap_overwrite(self, *attrs):
         if not attrs:
             raise TypeError
         attrs = ".".join(map(str, attrs))
@@ -172,8 +199,8 @@ class ProxyEmbed(discord.Embed):
                 overwrite,
                 attrs,
             )
-            return overwrite  # type: ignore
-        return obj  # type: ignore
+            return overwrite
+        return obj
 
     def to_dict(self):
         result = super().to_dict()
@@ -224,71 +251,12 @@ class ProxyEmbed(discord.Embed):
         if kwargs.pop("embed", self) is not self:
             raise TypeError("send_to() got an unexpected kwarg 'embed'")
         if isinstance(__dest, (discord.Message, discord.PartialMessage)):
-            send = functools.partial(__dest.edit, **kwargs)
+            send = __dest.edit
         else:
-            send = functools.partial(__dest.send, **kwargs)
+            send = __dest.send
         if await embed_requested(__dest, command=command):
-            return await send(embed=self)
-        _ = self.__unwrap_overwrite
-        try:
-            content = kwargs.pop("content")
-        except KeyError:
-            content = getattr(__dest, "content", None)
-        content = str(content) if content is not None else None
-        unwrapped = []
-        if content:
-            unwrapped.extend([content, ""])
-        title = _("title")
-        if title:
-            unwrapped.append(bold(title))
-        url = _("url")
-        if url:
-            unwrapped.append(f"> <{url}>")
-        name = _("author.name")
-        if name:
-            unwrapped.append(italics(name))
-        url = _("author.url")
-        if url:
-            unwrapped.append(f"<{url}>")
-        if unwrapped and unwrapped[-1]:
-            unwrapped.append("")
-        url = _("thumbnail.url")
-        if url and not url.startswith("attachment://"):
-            unwrapped.append(f"<{url}>")
-        description = _("description")
-        if description:
-            unwrapped.append(quote(description))
-        if unwrapped and unwrapped[-1]:
-            unwrapped.append("")
-        for i in range(len(getattr(self, "_fields", []))):
-            inline, name, value = (
-                # actual type: bool | _EmptyEmbed
-                cast(Optional[bool], _("_fields", i, "inline")),
-                _("_fields", i, "name"),
-                _("_fields", i, "value"),
-            )
-            assert name and value
-            LOG.debug("index: %r, inline: %r, name: %r, value: %r", i, inline, name, value)
-            name = f"**{name}**"
-            if inline is False or len(name) + len(value) > 78 or "\n" in name or "\n" in value:
-                unwrapped.append(name)
-                unwrapped.append(quote(value))
-            else:
-                unwrapped.append(f"{name} | {value}")
-        if unwrapped and unwrapped[-1]:
-            unwrapped.append("")
-        url = _("image.url")
-        if url and not url.startswith("attachment://"):
-            unwrapped.append(f"<{url}>")
-        # actual timestamp type: datetime | _EmptyEmbed
-        text, timestamp = _("footer.text"), cast(Optional[datetime], _("timestamp"))
-        if text and timestamp:
-            unwrapped.append(f"{text} • <t:{timestamp.timestamp():.0f}>")
-        elif text:
-            unwrapped.append(text)
-        elif timestamp:
-            unwrapped.append(f"<t:{timestamp.timestamp():.0f}>")
-
+            return await send(embed=self, **kwargs)
+        content = kwargs.pop("content", None)
         mentions: Optional[discord.AllowedMentions]
         if mentions := kwargs.get("allowed_mentions", None):
             if not content or not MM_RE.search(content):
@@ -305,5 +273,67 @@ class ProxyEmbed(discord.Embed):
                 kwargs["allowed_mentions"] = discord.AllowedMentions(
                     everyone=False, users=False, roles=False
                 )
+        unwrapped = self.unwrap()
+        if content:
+            unwrapped = f"{content}\n\n{unwrapped}"
+        return await send(content=unwrapped, **kwargs)
 
-        return await send(content=_reformat_links("\n".join(unwrapped)))
+    def unwrap(self) -> str:
+        """
+        Unwraps this ProxyEmbed into pure text.
+
+        This is useful for embeds that can't be sent in Discord.
+        """
+        _ = self.__unwrap_overwrite
+        emd = discord.utils.escape_markdown
+        unwrapped: List[str] = []
+        title = _("title")
+        if title:
+            unwrapped.append(f"**{emd(title)}**")
+        url = _("url")
+        if url:
+            unwrapped.append(f"> <{url}>")
+        name = _("author.name")
+        if name:
+            unwrapped.append(f"*{emd(name)}*")
+        url = _("author.url")
+        if url:
+            unwrapped.append(f"<{url}>")
+        if unwrapped and unwrapped[-1]:
+            unwrapped.append("")
+        url = _("thumbnail.url")
+        if url and not url.startswith("attachment://"):
+            unwrapped.append(f"<{url}>")
+        description = _("description")
+        if description:
+            unwrapped.append(_quote(description))
+        if unwrapped and unwrapped[-1]:
+            unwrapped.append("")
+        for i in range(len(getattr(self, "_fields", []))):
+            inline, name, value = (
+                _("_fields", i, "inline"),
+                _("_fields", i, "name"),
+                _("_fields", i, "value"),
+            )
+            assert name and value
+            LOG.debug("index: %r, inline: %r, name: %r, value: %r", i, inline, name, value)
+            name = f"**{emd(name)}**"
+            if inline is False or len(name) + len(value) > 78 or "\n" in name or "\n" in value:
+                unwrapped.append(name)
+                unwrapped.append(_quote(value))
+            else:
+                unwrapped.append(f"{name} | {value}")
+        if unwrapped and unwrapped[-1]:
+            unwrapped.append("")
+        url = _("image.url")
+        if url and not url.startswith("attachment://"):
+            unwrapped.append(f"<{url}>")
+        # actual timestamp type: datetime | _EmptyEmbed
+        text, timestamp = _("footer.text"), _("timestamp")
+        if text and timestamp:
+            unwrapped.append(f"{emd(text)} • <t:{timestamp.timestamp():.0f}>")
+        elif text:
+            unwrapped.append(emd(text))
+        elif timestamp:
+            unwrapped.append(f"<t:{timestamp.timestamp():.0f}>")
+        return _reformat_links("\n".join(unwrapped))
