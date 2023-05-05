@@ -22,7 +22,7 @@ except ImportError:
 
 __all__ = ["ProxyEmbed", "EmptyOverwrite", "embed_requested"]
 __author__ = "Zephyrkul"
-__version__ = "0.1.2"
+__version__ = "1.0.0"
 
 LOG = logging.getLogger("red.fluffy.proxyembed")
 MM_RE = re.compile(r"@(everyone|here)")
