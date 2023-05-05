@@ -7,8 +7,7 @@ import textwrap
 import warnings
 from collections import defaultdict
 from datetime import datetime
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, List, Literal, NoReturn, Optional, Union, overload
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, Sequence, overload
 
 import discord
 
@@ -26,25 +25,18 @@ __author__ = "Zephyrkul"
 __version__ = "0.1.2"
 
 LOG = logging.getLogger("red.fluffy.proxyembed")
-LINK_MD = re.compile(
-    r"\[(?P<text>[^\]]+)\]\(<?(?P<url>[^>\)\s]+)>?(?:\s+(\"|')(?P<hover>.+?)\3)?\)"
-)
 MM_RE = re.compile(r"@(everyone|here)")
 
 
-def _reformat_links(string: str) -> str:
-    return LINK_MD.sub(r"\g<text> (<\g<url>>)", string)
-
-
 def _quote(string: str) -> str:
-    return textwrap.indent(string, "> ", lambda l: True)
+    return textwrap.indent(string, "> ", lambda _: True)
 
 
 class _OverwritesEmbed(discord.Embed):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._fields = defaultdict(
-            lambda: defaultdict(lambda: self.Empty),
+            lambda: defaultdict(lambda: None),
             {i: v for i, v in enumerate(getattr(self, "_fields", ()))},
         )
 
@@ -70,11 +62,11 @@ EmptyOverwrite: Any = ""
 
 
 async def embed_requested(
-    __dest: Union[discord.abc.Messageable, discord.Message, discord.PartialMessage],
+    __dest: discord.abc.Messageable | discord.Message | discord.PartialMessage,
     /,
     *,
     bot: None = None,
-    command: commands.Command = None,
+    command: commands.Command | None = None,
 ) -> bool:
     """
     Helper method to determine whether to send an embed to any arbitrary destination.
@@ -82,32 +74,12 @@ async def embed_requested(
     if bot is not None:
         warnings.warn("Passing 'bot' to 'embed_requested' is deprecated.", DeprecationWarning)
     # Note: This doesn't handle GroupChannel. Bots can't access GroupChannels.
-    if method := getattr(__dest, "embed_requested", None):
-        return await method()
-    client: Red
-    if isinstance(__dest, discord.Message):
-        client = __dest._state._get_client()  # type: ignore
-        ns = SimpleNamespace(channel=__dest.channel, user=__dest.author, guild=__dest.guild)
-    elif isinstance(__dest, discord.PartialMessage):
-        client = __dest._state._get_client()  # type: ignore
-        ns = SimpleNamespace(
-            channel=__dest.channel,
-            user=getattr(__dest.channel, "recipient", None),
-            guild=__dest.guild,
-        )
-    else:
-        channel = await __dest._get_channel()  # type: ignore
-        client = channel._state._get_client()  # type: ignore
-        if user := getattr(channel, "recipient", None):
-            ns = SimpleNamespace(channel=channel, user=user, guild=None)
-        elif guild := getattr(channel, "guild", None):
-            # the actual user object here doesn't matter
-            ns = SimpleNamespace(channel=channel, user=None, guild=guild)
-        else:
-            raise TypeError(f"Unknown destination type {type(__dest)!r}")
-    if ns.guild and not ns.channel.permissions_for(ns.guild.me).embed_links:
-        return False
-    return await client.embed_requested(ns.channel, ns.user, command=command)
+    client: Red = __dest._state._get_client()  # type: ignore
+    if isinstance(__dest, (discord.Message, discord.PartialMessage)):
+        __dest = __dest.channel
+    elif isinstance(__dest, discord.DMChannel):
+        __dest = __dest.recipient  # type: ignore
+    return await client.embed_requested(__dest, command=command)  # type: ignore
 
 
 class ProxyEmbed(discord.Embed):
@@ -125,7 +97,8 @@ class ProxyEmbed(discord.Embed):
         if this ProxyEmbed unwraps into text.
         Ignored completely if this ProxyEmbed sends normally.
 
-        (Impl. note: This is just the empty string. Use the attribute anyway in case that ever changes.)
+        Impl. note: This is just the empty string.
+        Use the attribute anyway in case that ever changes.
     """
 
     # repeating __slots__ is a slight performance hit,
@@ -163,26 +136,30 @@ class ProxyEmbed(discord.Embed):
                     # pylint: disable=E1136
                     obj = obj[attr]
                 except (IndexError, KeyError, TypeError):
-                    return cls.Empty
+                    return None
         return obj
 
     @overload
     def __unwrap_overwrite(
         self, _1: Literal["_fields"], _2: int, _3: Literal["inline"], /
-    ) -> Optional[bool]:
+    ) -> bool | None:
         ...
 
     @overload
-    def __unwrap_overwrite(self, _1: Literal["timestamp"], /) -> Optional[datetime]:
+    def __unwrap_overwrite(self, _1: Literal["_fields"], _2: int, _3: str, /) -> str | None:
         ...
 
     @overload
-    def __unwrap_overwrite(self, _1: str, /, *attrs: str) -> Optional[str]:
+    def __unwrap_overwrite(self, _1: Literal["timestamp"], /) -> datetime | None:
+        ...
+
+    @overload
+    def __unwrap_overwrite(self, _1: str, /, *attrs: str) -> str | None:
         ...
 
     # There are other overloads to consider, but they're not needed for now
     # Actual possible return types:
-    # str | bool | int | discord.Colour | datetime.datetime | _EmptyEmbed
+    # str | bool | int | discord.Colour | datetime.datetime | None
     def __unwrap_overwrite(self, *attrs):
         if not attrs:
             raise TypeError
@@ -190,10 +167,10 @@ class ProxyEmbed(discord.Embed):
         overwrite = self.overwrites
         obj = self
         for attr in attrs.split("."):
-            if overwrite is not self.Empty:
+            if overwrite is not None:
                 overwrite = self.__get(overwrite, attr)
             obj = self.__get(obj, attr)
-        if overwrite is not self.Empty:
+        if overwrite is not None:
             LOG.debug(
                 "Returning overwritten value %r for attr ProxyEmbed.%s",
                 overwrite,
@@ -204,39 +181,79 @@ class ProxyEmbed(discord.Embed):
 
     def to_dict(self):
         result = super().to_dict()
-        result.pop("overwrites", None)
+        result.pop("overwrites", None)  # type: ignore
         return result
 
     @overload
     async def send_to(
         self,
-        __dest: discord.Message,
+        __dest: discord.Message | discord.PartialMessage,
         /,
         *,
-        command: Optional[commands.Command] = None,
-        **kwargs,
-    ) -> None:
+        command: commands.Command | None = None,
+        content: str | None = ...,
+        attachments: Sequence[discord.Attachment | discord.File] = ...,
+        suppress: bool = False,
+        delete_after: float | None = None,
+        allowed_mentions: discord.AllowedMentions | None = ...,
+        view: discord.ui.View | None = ...,
+    ) -> discord.Message:
         ...
 
     @overload
     async def send_to(
         self,
-        __dest: Union[discord.abc.Messageable, discord.PartialMessage],
+        __dest: discord.abc.Messageable,
         /,
         *,
-        command: Optional[commands.Command] = None,
-        **kwargs,
+        command: commands.Command | None = None,
+        tts: bool = False,
+        file: discord.File | None = None,
+        stickers: Sequence[discord.GuildSticker | discord.StickerItem] | None = None,
+        delete_after: float | None = None,
+        nonce: str | int | None = None,
+        allowed_mentions: discord.AllowedMentions | None = None,
+        reference: discord.Message
+        | discord.MessageReference
+        | discord.PartialMessage
+        | None = None,
+        mention_author: bool | None = None,
+        view: discord.ui.View | None = None,
+        silent: bool = False,
+    ) -> discord.Message:
+        ...
+
+    @overload
+    async def send_to(
+        self,
+        __dest: discord.abc.Messageable,
+        /,
+        *,
+        command: commands.Command | None = None,
+        tts: bool = False,
+        files: Sequence[discord.File] | None = None,
+        stickers: Sequence[discord.GuildSticker | discord.StickerItem] | None = None,
+        delete_after: float | None = None,
+        nonce: str | int | None = None,
+        allowed_mentions: discord.AllowedMentions | None = None,
+        reference: discord.Message
+        | discord.MessageReference
+        | discord.PartialMessage
+        | None = None,
+        mention_author: bool | None = None,
+        view: discord.ui.View | None = None,
+        silent: bool = False,
     ) -> discord.Message:
         ...
 
     async def send_to(
         self,
-        __dest: Union[discord.abc.Messageable, discord.Message, discord.PartialMessage],
+        __dest: discord.abc.Messageable | discord.Message | discord.PartialMessage,
         /,
         *,
-        command: Optional[commands.Command] = None,
-        **kwargs,
-    ) -> Optional[discord.Message]:
+        command: commands.Command | None = None,
+        **kwargs: Any,
+    ) -> discord.Message:
         """
         Sends this ProxyEmbed to the specified destination.
 
@@ -254,7 +271,9 @@ class ProxyEmbed(discord.Embed):
             send = __dest.edit
         else:
             send = __dest.send
+            kwargs["suppress_embeds"] = True
         if await embed_requested(__dest, command=command):
+            kwargs.pop("suppress_embeds", None)
             return await send(embed=self, **kwargs)
         content = kwargs.pop("content", None)
         mentions: Optional[discord.AllowedMentions]
@@ -286,13 +305,13 @@ class ProxyEmbed(discord.Embed):
         """
         _ = self.__unwrap_overwrite
         emd = discord.utils.escape_markdown
-        unwrapped: List[str] = []
+        unwrapped: list[str] = []
         title = _("title")
         if title:
             unwrapped.append(f"**{emd(title)}**")
         url = _("url")
         if url:
-            unwrapped.append(f"> <{url}>")
+            unwrapped.append(f"> {url}")
         name = _("author.name")
         if name:
             unwrapped.append(f"*{emd(name)}*")
@@ -303,7 +322,7 @@ class ProxyEmbed(discord.Embed):
             unwrapped.append("")
         url = _("thumbnail.url")
         if url and not url.startswith("attachment://"):
-            unwrapped.append(f"<{url}>")
+            unwrapped.append(f"{url}")
         description = _("description")
         if description:
             unwrapped.append(_quote(description))
@@ -327,8 +346,7 @@ class ProxyEmbed(discord.Embed):
             unwrapped.append("")
         url = _("image.url")
         if url and not url.startswith("attachment://"):
-            unwrapped.append(f"<{url}>")
-        # actual timestamp type: datetime | _EmptyEmbed
+            unwrapped.append(f"{url}")
         text, timestamp = _("footer.text"), _("timestamp")
         if text and timestamp:
             unwrapped.append(f"{emd(text)} • <t:{timestamp.timestamp():.0f}>")
@@ -336,4 +354,4 @@ class ProxyEmbed(discord.Embed):
             unwrapped.append(emd(text))
         elif timestamp:
             unwrapped.append(f"<t:{timestamp.timestamp():.0f}>")
-        return _reformat_links("\n".join(unwrapped))
+        return "\n".join(unwrapped)
